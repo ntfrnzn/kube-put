@@ -10,9 +10,12 @@ import (
 	"strings"
 
 	// "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/restmapper"
 
 	//utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -69,6 +72,21 @@ func main() {
 		panic(err.Error())
 	}
 
+	// --- get the resource name for the gvk
+	client, err := discovery.NewDiscoveryClientForConfig(config)
+	groupResources, err := restmapper.GetAPIGroupResources(client)
+	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
+
+	m, err := mapper.RESTMappings(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		panic(err.Error())
+	}
+	if len(m) == 0 {
+		panic("no resources")
+	}
+	resourceName := m[0].Resource.Resource
+	// ---
+
 	// convert the runtime.Object to unstructured.Unstructured
 	unstructuredData, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 	if err != nil {
@@ -78,7 +96,7 @@ func main() {
 		Object: unstructuredData,
 	}
 	// create the object using the dynamic client
-	resource := schema.GroupVersionResource{Version: gvk.Version, Resource: kindToResource(gvk.Kind)}
+	resource := schema.GroupVersionResource{Version: gvk.Version, Resource: resourceName} // kindToResource(gvk.Kind)}
 
 	createdUnstructuredObj, err := dynamicClient.Resource(resource).Namespace("default").Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
 	if err != nil {
