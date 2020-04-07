@@ -4,30 +4,20 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
-	"strings"
 
-	// "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"github.com/ntfrnzn/kube-put/internal/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-
-	//utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// Scheme is the basic k8s scheme
-var Scheme *runtime.Scheme
-
-func init() {
-	Scheme = scheme.Scheme //runtime.NewScheme()
-}
 
 func main() {
 
@@ -52,16 +42,11 @@ func main() {
 		panic(err.Error())
 	}
 
-	obj, err := loadObject(file)
+	objects, err := util.ReadObjects(file)
 	if err != nil {
 		panic(err.Error())
 	}
-	if obj == nil {
-		log.Fatal("oops, no object")
-	}
 
-	gvk := obj.GetObjectKind().GroupVersionKind()
-	fmt.Printf("%s\n", gvk.GroupKind())
 
 	// create the dynamic client from kubeconfig
 	dynamicClient, err := dynamic.NewForConfig(config)
@@ -69,45 +54,42 @@ func main() {
 		panic(err.Error())
 	}
 
-	// convert the runtime.Object to unstructured.Unstructured
-	unstructuredData, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
-	if err != nil {
-		panic(err.Error())
+	for _, obj := range objects {
+		gvk := obj.GetObjectKind().GroupVersionKind()
+
+		// --- get the resource name for the gvk
+		client, err := discovery.NewDiscoveryClientForConfig(config)
+		groupResources, err := restmapper.GetAPIGroupResources(client)
+		mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
+
+		m, err := mapper.RESTMappings(gvk.GroupKind(), gvk.Version)
+		if err != nil {
+			panic(err.Error())
+		}
+		if len(m) == 0 {
+			panic("no resources")
+		}
+		resourceName := m[0].Resource.Resource
+		// ---
+
+		// convert the runtime.Object to unstructured.Unstructured
+		unstructuredData, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+		if err != nil {
+			panic(err.Error())
+		}
+		unstructuredObj := &unstructured.Unstructured{
+			Object: unstructuredData,
+		}
+		fmt.Printf("%s %s\n", gvk.GroupKind(), unstructuredObj.GetName())
+		// create the object using the dynamic client
+		resource := schema.GroupVersionResource{Version: gvk.Version, Resource: resourceName}
+
+		createdUnstructuredObj, err := dynamicClient.Resource(resource).Namespace("default").Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
+		if err != nil {
+			panic(err.Error())
+		}
+
+		log.Println(createdUnstructuredObj.GetName())
 	}
-	unstructuredObj := &unstructured.Unstructured{
-		Object: unstructuredData,
-	}
-	// create the object using the dynamic client
-	resource := schema.GroupVersionResource{Version: gvk.Version, Resource: kindToResource(gvk.Kind)}
 
-	createdUnstructuredObj, err := dynamicClient.Resource(resource).Namespace("default").Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
-	if err != nil {
-		panic(err.Error())
-	}
-
-	log.Println(createdUnstructuredObj.GetName())
-
-}
-
-func loadObject(filename string) (runtime.Object, error) {
-
-	data, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-	// fmt.Println(string(data))
-
-	decoder := serializer.NewCodecFactory(Scheme, serializer.EnableStrict).UniversalDeserializer()
-	obj, _ /* gvk */, err := decoder.Decode(data, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	// fmt.Println("obj: ", obj)
-	// fmt.Println("gvk: ", gvk)
-
-	return obj, nil
-}
-
-func kindToResource(kind string) string {
-	return strings.ToLower(kind) + "s"
 }
