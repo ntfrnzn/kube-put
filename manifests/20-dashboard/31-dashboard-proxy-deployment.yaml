@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    k8s-app: dashboard-proxy
+  name: dashboard-proxy
+  namespace: kubernetes-dashboard
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      k8s-app: dashboard-proxy
+  template:
+    metadata:
+      labels:
+        k8s-app: dashboard-proxy
+      name: dashboard-proxy
+      namespace: kubernetes-dashboard
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            preference:
+              matchExpressions:
+              - key: node-role.kubernetes.io/master
+                operator: Exists
+      initContainers:
+      - image: nginx
+        name: templater
+        volumeMounts:
+          - mountPath: /etc/nginx/
+            name: nginx-conf
+          - mountPath: /opt/template
+            name: nginx-conf-template
+        command:
+          - bash
+          - -c
+          - |
+            export TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            sed -e s/__TOKEN__/$TOKEN/ < /opt/template/nginx.conf >/etc/nginx/nginx.conf
+            echo "cluster-admin:gdiT3Y5TYvkcM" > /etc/nginx/htpasswd
+      containers:
+      - image: nginx
+        imagePullPolicy: Always
+        name: nginx
+        ports:
+        - containerPort: 12443
+          hostPort: 12443
+          protocol: TCP
+        resources: {}
+        volumeMounts:
+        - mountPath: /etc/nginx/
+          name: nginx-conf
+        - mountPath: /etc/nginx/ssl
+          name: tls
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: true
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      serviceAccount: admin-user
+      serviceAccountName: admin-user
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/master
+        operator: Exists
+      volumes:
+      - name: nginx-conf-template
+        configMap:
+          defaultMode: 420
+          name: dashboard-proxy
+      - name: tls
+        secret:
+          secretName: kubernetes-dashboard-tls
+      - name: nginx-conf
+        emptyDir: {}

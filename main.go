@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"log"
 	"os"
 
 	"github.com/ntfrnzn/kube-put/internal/util"
@@ -12,19 +11,19 @@ import (
 func main() {
 
 	var kubeconfig string
-	var file string
+	// var file string
 
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
-	flag.StringVar(&file, "file", "", "json or yaml file describing kubernetes object")
+	// flag.StringVar(&file, "file", "", "json or yaml file describing kubernetes object")
 	flag.Parse()
 
 	if kubeconfig == "" {
 		kubeconfig = os.Getenv("KUBECONFIG")
 	}
 
-	if file == "" {
-		log.Fatal("must supply an input file")
-	}
+	// if file == "" {
+	// 	log.Fatal("must supply an input file")
+	// }
 
 	// use the current context in kubeconfig
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -32,7 +31,9 @@ func main() {
 		panic(err.Error())
 	}
 
-	objects, err := util.ReadObjects(file)
+	// objects, err := util.ReadObjects(file)
+
+	objects, err := util.LoadObjects()
 	if err != nil {
 		panic(err.Error())
 	}

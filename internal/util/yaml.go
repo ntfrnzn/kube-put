@@ -4,11 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"log"
 	"io/ioutil"
 
+	"github.com/ntfrnzn/kube-put/internal/box"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
+	cmapi "github.com/jetstack/cert-manager/pkg/api"
 )
 
 // Scheme is the basic k8s scheme
@@ -16,14 +20,49 @@ var Scheme *runtime.Scheme
 
 func init() {
 	Scheme = scheme.Scheme //runtime.NewScheme()
+    apiextensions.AddToScheme(Scheme)
+	cmapi.AddToScheme(Scheme)
 }
 
 
 const yamlSeparator = "\n---"
 const separator = "---"
 
+func LoadObjects() ([]runtime.Object, error) {
+	objects := []runtime.Object{}
+	manifests := box.Boxed.List()
+	for _, m := range manifests {
+		log.Printf("Loading %s\n", m)
+		data := box.Boxed.Get(m)
+		
+		scanner := bufio.NewScanner(bytes.NewReader(data))
+		buf := make([]byte, 8*1024)
+		scanner.Buffer(buf, 512 * 1024)
+
+		scanner.Split(splitYAMLDocument)
+
+		for scanner.Scan() {
+			decoder := serializer.NewCodecFactory(Scheme, serializer.EnableStrict).UniversalDeserializer()
+			obj, _ /* gvk */, err := decoder.Decode(scanner.Bytes(), nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			objects = append(objects, obj)
+		}
+
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("Invalid input: %s", err)
+		}
+	}
+	return objects, nil
+
+}
+
 func ReadObjects(filename string) ([]runtime.Object, error) {
 
+	objects := []runtime.Object{}
+
+	log.Printf("Loading %s\n", filename)
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
@@ -32,7 +71,6 @@ func ReadObjects(filename string) ([]runtime.Object, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Split(splitYAMLDocument)
 
-	objects := []runtime.Object{}
 	for scanner.Scan() {
 		decoder := serializer.NewCodecFactory(Scheme, serializer.EnableStrict).UniversalDeserializer()
 		obj,  _ /* gvk */, err := decoder.Decode(scanner.Bytes(), nil, nil)

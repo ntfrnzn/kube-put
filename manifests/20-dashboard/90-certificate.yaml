@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: kubernetes-dashboard
+  namespace: kubernetes-dashboard
+spec:
+  secretName: kubernetes-dashboard-tls
+  dnsNames:
+  - "*.kubernetes-dashboard.svc.cluster.local"
+  - "*.kubernetes-dashboard"
+  - "*.one.den.solidfire.net"
+  - "10.117.71.44"
+  - "10.117.72.105"
+  - "10.117.76.180"
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer

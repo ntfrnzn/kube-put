@@ -5,22 +5,24 @@ import (
 	"fmt"
 	"log"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 )
 
-
-func Put(obj runtime.Object, config  *rest.Config ) error {
+func Put(obj runtime.Object, config *rest.Config) error {
 
 	// create the dynamic client from kubeconfig
 	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	gvk, resourceName, err := Discover(obj, config)
 	if err != nil {
@@ -35,20 +37,43 @@ func Put(obj runtime.Object, config  *rest.Config ) error {
 	unstructuredObj := &unstructured.Unstructured{
 		Object: unstructuredData,
 	}
-	fmt.Printf("%s %s\n", gvk.GroupKind(), unstructuredObj.GetName())
+	fmt.Printf("%s   %s/%s \n", gvk.GroupKind(), unstructuredObj.GetNamespace(), unstructuredObj.GetName())
 	// create the object using the dynamic client
-	resource := schema.GroupVersionResource{Version: gvk.Version, Resource: resourceName}
+	resource := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: resourceName}
 
-	createdUnstructuredObj, err := dynamicClient.Resource(resource).Namespace("default").Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
-	if err != nil {
-		return err
+	log.Println(unstructuredObj.GetName())
+	ns := unstructuredObj.GetNamespace()
+	var createdUnstructuredObj *unstructured.Unstructured
+	var iface dynamic.ResourceInterface
+	if ns == "" {
+		iface = dynamicClient.Resource(resource)
+	} else {
+		iface = dynamicClient.Resource(resource).Namespace(ns)
 	}
 
-	log.Println(createdUnstructuredObj.GetName())
+	_, err = iface.Get(context.TODO(), unstructuredObj.GetName(), metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			createdUnstructuredObj, err = iface.Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
+		} else {
+			return err
+		}
+	}
+
+	if err != nil {
+		log.Printf("Error: %+v", err)
+		return fmt.Errorf("cannot create resource %s %s, %w", resourceName, unstructuredObj.GetName(), err)
+	}
+
+	if createdUnstructuredObj == nil {
+		log.Printf("skipped %v\n", unstructuredObj.GetName())
+	} else {
+		log.Printf("created %v\n", createdUnstructuredObj.GetName())
+	}
 	return nil
 }
 
-func Discover(obj runtime.Object, config  *rest.Config ) (*schema.GroupVersionKind, string, error){
+func Discover(obj runtime.Object, config *rest.Config) (*schema.GroupVersionKind, string, error) {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 
 	// --- get the resource name for the gvk

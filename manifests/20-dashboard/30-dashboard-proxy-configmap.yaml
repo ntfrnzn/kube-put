@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-proxy
+  namespace: kubernetes-dashboard
+data:
+  nginx.conf: |-
+
+    worker_processes auto;
+    error_log /var/log/nginx/error.log info;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        log_format addHeaderlog '$remote_addr - $remote_user [$time_local] '
+            '"$request" $status $body_bytes_sent '
+            '"$http_referer" "$http_user_agent" "$http_x_forwarded_for" "$request_body" "$http_Authorization" "$http_x_duid" "$http_x_ver" "$upstream_http_x_rqid"';
+        access_log  /var/log/nginx/access.log addHeaderlog;
+
+        ssl_certificate /etc/nginx/ssl/tls.crt;
+        ssl_certificate_key /etc/nginx/ssl/tls.key;
+
+        server {
+            listen     12443 ssl;
+
+            location / {
+
+                auth_basic           "Kubernetes Dashboard";
+                auth_basic_user_file /etc/nginx/htpasswd;
+
+                proxy_pass https://kubernetes-dashboard.kubernetes-dashboard:443;
+
+                proxy_set_header Authorization "Bearer __TOKEN__";
+                proxy_ssl_trusted_certificate /var/run/secrets/kubernetes.io/serviceaccount/ca.crt;
+
+                proxy_set_header Impersonate-User dashboard-user;
+                proxy_set_header Impersonate-Group dashboard-group-blue;
+
+                proxy_ssl_protocols           TLSv1 TLSv1.1 TLSv1.2;
+                proxy_ssl_ciphers             HIGH:!aNULL:!MD5;
+
+                # https://trac.nginx.org/nginx/ticket/501#comment:8
+                # proxy_ssl_verify        on;
+                # proxy_ssl_verify_depth  2;
+                proxy_ssl_session_reuse on;
+            }
+        }
+    }
+
