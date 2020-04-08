@@ -39,30 +39,35 @@ func Put(obj runtime.Object, config *rest.Config) error {
 	}
 	fmt.Printf("%s   %s/%s \n", gvk.GroupKind(), unstructuredObj.GetNamespace(), unstructuredObj.GetName())
 	// create the object using the dynamic client
-	resource := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: resourceName}
+	gvr := schema.GroupVersionResource{
+		Group: gvk.Group,
+		Version: gvk.Version,
+		Resource: resourceName,
+	}
 
 	log.Println(unstructuredObj.GetName())
 	ns := unstructuredObj.GetNamespace()
 	var createdUnstructuredObj *unstructured.Unstructured
 	var iface dynamic.ResourceInterface
 	if ns == "" {
-		iface = dynamicClient.Resource(resource)
+		iface = dynamicClient.Resource(gvr)
 	} else {
-		iface = dynamicClient.Resource(resource).Namespace(ns)
+		iface = dynamicClient.Resource(gvr).Namespace(ns)
 	}
 
-	_, err = iface.Get(context.TODO(), unstructuredObj.GetName(), metav1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			createdUnstructuredObj, err = iface.Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
-		} else {
-			return err
+	_, err = iface.Get(context.TODO(), unstructuredObj.GetName(), metav1.GetOptions{}) //TypeMeta: metav1.TypeMeta{Kind: gvk.Kind, APIVersion: gvk.Version}})
+	if err != nil && errors.IsNotFound(err) {
+		createdUnstructuredObj, err = iface.Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
+	} else {
+		if err != nil {
+			log.Printf("Error: %+v", err)
+			return fmt.Errorf("cannot get resource %s %s, %w", gvr.String(), unstructuredObj.GetName(), err)
 		}
 	}
 
 	if err != nil {
 		log.Printf("Error: %+v", err)
-		return fmt.Errorf("cannot create resource %s %s, %w", resourceName, unstructuredObj.GetName(), err)
+		return fmt.Errorf("cannot create resource %s %s, %w", gvr.String(), unstructuredObj.GetName(), err)
 	}
 
 	if createdUnstructuredObj == nil {
@@ -76,7 +81,7 @@ func Put(obj runtime.Object, config *rest.Config) error {
 func Discover(obj runtime.Object, config *rest.Config) (*schema.GroupVersionKind, string, error) {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 
-	// --- get the resource name for the gvk
+	// get the resource name for the gvk
 	client, err := discovery.NewDiscoveryClientForConfig(config)
 	groupResources, err := restmapper.GetAPIGroupResources(client)
 	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
@@ -89,6 +94,6 @@ func Discover(obj runtime.Object, config *rest.Config) (*schema.GroupVersionKind
 		return nil, "", fmt.Errorf("No resource found for %s", gvk.String())
 	}
 	resourceName := m[0].Resource.Resource
-	// ---
+
 	return &gvk, resourceName, nil
 }
