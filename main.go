@@ -2,7 +2,9 @@ package main
 
 import (
 	"flag"
+	"log"
 	"os"
+	"time"
 
 	"github.com/ntfrnzn/kube-put/internal/util"
 	"k8s.io/client-go/tools/clientcmd"
@@ -39,9 +41,20 @@ func main() {
 	}
 
 	for _, obj := range objects {
-		err := util.Put(obj, config)
-		if err != nil {
-			panic(err.Error())
+
+		var pause = 30*time.Second
+		var installError error
+		for i := 0; i < 10; i++ {
+			installError = util.Put(obj, config)
+			if installError != nil {
+				log.Printf("Error: %s, pausing %s", installError, pause)
+				time.Sleep( pause )
+			} else {
+				break
+			}
+		}
+		if installError != nil {
+			log.Fatal("Error installing %s, %w", obj.GetObjectKind().GroupVersionKind().String, installError)
 		}
 	}
 
