@@ -8,15 +8,20 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/discovery"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
 )
 
-func Put(obj runtime.Object, config *rest.Config) error {
+
+var (
+	gkIssuer = schema.GroupKind{Group: "cert-manager.io", Kind: "Issuer"}
+	gkAPIServer = schema.GroupKind{Group: "apiregistration.k8s.io", Kind: "APIService"}
+)
+
+
+func Put(ao ApplyObject, config *rest.Config) error {
 
 	// create the dynamic client from kubeconfig
 	dynamicClient, err := dynamic.NewForConfig(config)
@@ -24,30 +29,22 @@ func Put(obj runtime.Object, config *rest.Config) error {
 		return err
 	}
 
-	gvk, resourceName, err := Discover(obj, config)
+	gvk, resourceName, err := Discover(ao.Runtime, config)
 	if err != nil {
 		return err
 	}
 
-	// convert the runtime.Object to unstructured.Unstructured
-	unstructuredData, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
-	if err != nil {
-		return err
-	}
-	unstructuredObj := &unstructured.Unstructured{
-		Object: unstructuredData,
-	}
-	fmt.Printf("%s   %s/%s \n", gvk.GroupKind(), unstructuredObj.GetNamespace(), unstructuredObj.GetName())
+	fmt.Printf("%s   %s/%s \n", gvk.GroupKind(), ao.Unstruc.GetNamespace(), ao.Unstruc.GetName())
 	// create the object using the dynamic client
 	gvr := schema.GroupVersionResource{
-		Group: gvk.Group,
-		Version: gvk.Version,
+		Group:    gvk.Group,
+		Version:  gvk.Version,
 		Resource: resourceName,
 	}
 
-	log.Println(unstructuredObj.GetName())
-	ns := unstructuredObj.GetNamespace()
-	var createdUnstructuredObj *unstructured.Unstructured
+	log.Println(ao.Unstruc.GetName())
+	ns := ao.Unstruc.GetNamespace()
+	var patched *unstructured.Unstructured
 	var iface dynamic.ResourceInterface
 	if ns == "" {
 		iface = dynamicClient.Resource(gvr)
@@ -55,45 +52,48 @@ func Put(obj runtime.Object, config *rest.Config) error {
 		iface = dynamicClient.Resource(gvr).Namespace(ns)
 	}
 
-	_, err = iface.Get(context.TODO(), unstructuredObj.GetName(), metav1.GetOptions{}) //TypeMeta: metav1.TypeMeta{Kind: gvk.Kind, APIVersion: gvk.Version}})
-	if err != nil && errors.IsNotFound(err) {
-		createdUnstructuredObj, err = iface.Create(context.TODO(), unstructuredObj, metav1.CreateOptions{})
-	} else {
+	forceApply := true // https://github.com/kubernetes/kubernetes/issues/89954
+	// see also https://github.com/kubernetes-sigs/structured-merge-diff/issues/130
+	// :( :( https://github.com/kubernetes/kubernetes/issues/89264
+	if gvk.GroupKind() == gkAPIServer {
+		log.Printf("Can't \"apply\" APIService %s because of https://github.com/kubernetes/kubernetes/issues/89264", ao.Unstruc.GetName() )
+		_, err = iface.Get(context.TODO(), ao.Unstruc.GetName(), metav1.GetOptions{TypeMeta: metav1.TypeMeta{Kind: gvk.Kind, APIVersion: gvk.Version}})
 		if err != nil {
-			log.Printf("Error: %+v", err)
-			return fmt.Errorf("cannot get resource %s %s, %w", gvr.String(), unstructuredObj.GetName(), err)
+			log.Printf("Error in Get: %+v", err)
 		}
+		if err != nil && errors.IsNotFound(err) {
+			patched, err = iface.Create(context.TODO(), ao.Unstruc, metav1.CreateOptions{})
+			if err != nil {
+				log.Printf("Error in Create: %+v", err)
+			}
+		} else {
+			if err != nil {
+				log.Printf("Error: %+v", err)
+				return fmt.Errorf("cannot get resource %s %s, %w", gvr.String(), ao.Unstruc.GetName(), err)
+			}
+		}
+	} else {
+		patched, err = iface.Patch(
+			context.TODO(),
+			ao.Unstruc.GetName(),
+			types.ApplyPatchType,
+			ao.Raw,
+			metav1.PatchOptions{
+				Force:        &forceApply,
+				FieldManager: "kube-put",
+			},
+		)
 	}
 
 	if err != nil {
 		log.Printf("Error: %+v", err)
-		return fmt.Errorf("cannot create resource %s %s, %w", gvr.String(), unstructuredObj.GetName(), err)
+		return fmt.Errorf("cannot apply resource %s %s, %w", gvr.String(), ao.Unstruc.GetName(), err)
 	}
 
-	if createdUnstructuredObj == nil {
-		log.Printf("skipped %v\n", unstructuredObj.GetName())
+	if patched == nil {
+		log.Printf("skipped %v\n", ao.Unstruc.GetName())
 	} else {
-		log.Printf("created %v\n", createdUnstructuredObj.GetName())
+		log.Printf("applied %v\n", patched.GetName())
 	}
 	return nil
-}
-
-func Discover(obj runtime.Object, config *rest.Config) (*schema.GroupVersionKind, string, error) {
-	gvk := obj.GetObjectKind().GroupVersionKind()
-
-	// get the resource name for the gvk
-	client, err := discovery.NewDiscoveryClientForConfig(config)
-	groupResources, err := restmapper.GetAPIGroupResources(client)
-	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
-
-	m, err := mapper.RESTMappings(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return nil, "", err
-	}
-	if len(m) == 0 {
-		return nil, "", fmt.Errorf("No resource found for %s", gvk.String())
-	}
-	resourceName := m[0].Resource.Resource
-
-	return &gvk, resourceName, nil
 }

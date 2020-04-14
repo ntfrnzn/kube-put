@@ -14,4 +14,4 @@ spec:
   - "10.117.76.180"
   issuerRef:
     name: selfsigned-issuer
-    kind: ClusterIssuer
+    kind: Issuer

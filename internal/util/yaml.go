@@ -4,15 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"log"
 	"io/ioutil"
+	"log"
 
-	"github.com/ntfrnzn/kube-put/internal/box"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	cmapi "github.com/jetstack/cert-manager/pkg/api"
+	"github.com/ntfrnzn/kube-put/internal/box"
+	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 )
 
 // Scheme is the basic k8s scheme
@@ -28,8 +33,15 @@ func init() {
 const yamlSeparator = "\n---"
 const separator = "---"
 
-func LoadObjects() ([]runtime.Object, error) {
-	objects := []runtime.Object{}
+type ApplyObject struct {
+	Raw []byte
+	Unstruc *unstructured.Unstructured
+	Runtime runtime.Object
+}
+
+func LoadObjects() ([]ApplyObject, error) {
+
+	objects := []ApplyObject{}
 	manifests := box.Boxed.List()
 	for _, m := range manifests {
 		log.Printf("Loading %s\n", m)
@@ -43,11 +55,26 @@ func LoadObjects() ([]runtime.Object, error) {
 
 		for scanner.Scan() {
 			decoder := serializer.NewCodecFactory(Scheme, serializer.EnableStrict).UniversalDeserializer()
-			obj, _ /* gvk */, err := decoder.Decode(scanner.Bytes(), nil, nil)
+			a := ApplyObject{
+				Raw: make([]byte, len(scanner.Bytes())),
+			}
+			copy(a.Raw,scanner.Bytes())
+			obj, _ /* gvk */, err := decoder.Decode(a.Raw, nil, nil)
 			if err != nil {
 				return nil, err
 			}
-			objects = append(objects, obj)
+			a.Runtime = obj
+
+			// convert the runtime.Object to unstructured.Unstructured
+			unstructuredData, err := runtime.DefaultUnstructuredConverter.ToUnstructured(a.Runtime)
+			if err != nil {
+				return nil, err
+			}
+			a.Unstruc = &unstructured.Unstructured{
+				Object: unstructuredData,
+			}
+
+			objects = append(objects, a)
 		}
 
 		if err := scanner.Err(); err != nil {
@@ -116,3 +143,25 @@ func splitYAMLDocument(data []byte, atEOF bool) (advance int, token []byte, err 
 	// Request more data.
 	return 0, nil, nil
 }
+
+
+func Discover(obj runtime.Object, config *rest.Config) (*schema.GroupVersionKind, string, error) {
+	gvk := obj.GetObjectKind().GroupVersionKind()
+
+	// get the resource name for the gvk
+	client, err := discovery.NewDiscoveryClientForConfig(config)
+	groupResources, err := restmapper.GetAPIGroupResources(client)
+	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
+
+	m, err := mapper.RESTMappings(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(m) == 0 {
+		return nil, "", fmt.Errorf("No resource found for %s", gvk.String())
+	}
+	resourceName := m[0].Resource.Resource
+
+	return &gvk, resourceName, nil
+}
+

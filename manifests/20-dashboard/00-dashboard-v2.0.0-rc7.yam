@@ -40,6 +40,7 @@ spec:
   ports:
     - port: 443
       targetPort: 8443
+      protocol: TCP
   selector:
     k8s-app: kubernetes-dashboard
 
@@ -244,6 +245,7 @@ spec:
   ports:
     - port: 8000
       targetPort: 8000
+      protocol: TCP
   selector:
     k8s-app: dashboard-metrics-scraper
 

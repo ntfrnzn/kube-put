@@ -40,12 +40,12 @@ func main() {
 		panic(err.Error())
 	}
 
-	for _, obj := range objects {
+	for _, a := range objects {
 
 		var pause = 30*time.Second
 		var installError error
 		for i := 0; i < 10; i++ {
-			installError = util.Put(obj, config)
+			installError = util.Put(a, config)
 			if installError != nil {
 				log.Printf("Error: %s, pausing %s", installError, pause)
 				time.Sleep( pause )
@@ -54,7 +54,7 @@ func main() {
 			}
 		}
 		if installError != nil {
-			log.Fatal("Error installing %s, %w", obj.GetObjectKind().GroupVersionKind().String, installError)
+			log.Fatal("Error installing %s, %w", a.Runtime.GetObjectKind().GroupVersionKind().String, installError)
 		}
 	}
 
