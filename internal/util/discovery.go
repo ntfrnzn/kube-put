@@ -21,7 +21,7 @@ var (
 )
 
 
-func Put(ao ApplyObject, config *rest.Config) error {
+func Apply(ao ApplyObject, config *rest.Config) error {
 
 	// create the dynamic client from kubeconfig
 	dynamicClient, err := dynamic.NewForConfig(config)
